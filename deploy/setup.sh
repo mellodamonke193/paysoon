@@ -13,17 +13,17 @@ fi
 if [ ! -f .env ]; then
   echo
   echo "First-time setup."
-  read -rp "Domain for the site (leave blank to test on this server's IP address): " DOMAIN
+  read -rp "Domain for the site (leave blank for a free test address): " DOMAIN
   read -rp "Your email (admin login and support contact): " ADMIN
 
-  if [ -n "$DOMAIN" ]; then
-    APP_URL="https://$DOMAIN"
-    SITE_ADDRESS="$DOMAIN"
-  else
+  if [ -z "$DOMAIN" ]; then
+    # No domain yet: sslip.io maps "1-2-3-4.sslip.io" to the IP 1.2.3.4, so the test site gets a real
+    # hostname and a real HTTPS certificate without buying anything.
     IP=$(curl -fsS http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address 2>/dev/null || curl -fsS https://ifconfig.me)
-    APP_URL="http://$IP"
-    SITE_ADDRESS=":80"
+    DOMAIN="${IP//./-}.sslip.io"
   fi
+  APP_URL="https://$DOMAIN"
+  SITE_ADDRESS="$DOMAIN"
 
   cat > .env <<EOF
 # Test mode: emails are printed to the logs instead of being sent (see "docker compose logs app").
@@ -59,6 +59,7 @@ echo
 echo "Paysoon is starting at: $APP_URL"
 echo "  Logs (and test-mode emails, incl. verification links):  docker compose -f deploy/docker-compose.yml logs -f app"
 echo "  Edit settings:  nano .env   then re-run:  sudo bash deploy/setup.sh"
-if [[ "$APP_URL" == http://* ]]; then
-  echo "  NOTE: plain-HTTP IP mode is for testing only. Point a domain at this server and use it for real users."
+echo "  The HTTPS certificate is fetched automatically; the very first visit can take up to a minute."
+if [[ "$APP_URL" == *.sslip.io ]]; then
+  echo "  NOTE: this free sslip.io address is for testing. Use your own domain for real customers."
 fi

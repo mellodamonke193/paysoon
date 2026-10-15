@@ -101,9 +101,9 @@ cd paysoon && git config core.sshCommand "ssh -i ~/.ssh/paysoon"
 sudo bash deploy/setup.sh
 ```
 
-`setup.sh` installs Docker, asks for your domain (or uses the droplet's IP for a quick test), generates the secret
-key, and runs Paysoon behind Caddy, which gets a free HTTPS certificate automatically once your domain's DNS **A
-record** points at the droplet. It starts in test mode (emails go to the logs); fill in Resend/Stripe in `.env`, set
+`setup.sh` installs Docker, asks for your domain (leave it blank for a free `1-2-3-4.sslip.io` test address that
+points at the droplet), generates the secret key, and runs Paysoon behind Caddy, which gets a free HTTPS
+certificate automatically (for your own domain, first point its DNS **A record** at the droplet). It starts in test mode (emails go to the logs); fill in Resend/Stripe in `.env`, set
 `NODE_ENV=production` and re-run the script to go live. To deploy updates later: `git pull && sudo bash deploy/setup.sh`.
 
 ## Go live (one-time, about an hour)
