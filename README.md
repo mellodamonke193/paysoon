@@ -81,6 +81,31 @@ npm run dev
 Open http://localhost:3000. With no `RESEND_API_KEY`, emails are printed in the terminal (including verification
 links) instead of being sent. Use `localhost`, not `127.0.0.1`, so the browser's Origin matches `APP_URL`.
 
+## Test drive in GitHub Codespaces (free, nothing to install)
+
+On the repo page click **Code → Codespaces → Create codespace on main**. The app starts by itself and opens in a
+browser tab (the link is private to you). Emails, including the verification link, are printed in the terminal.
+
+## Host it on a DigitalOcean droplet (or any Ubuntu server)
+
+Open the droplet's **Console** in DigitalOcean, then:
+
+```bash
+# 1. Give the server read access to the private repo (one-time)
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/paysoon -q && cat ~/.ssh/paysoon.pub
+#    → copy the printed key into GitHub: repo Settings → Deploy keys → Add deploy key (leave "write" unticked)
+
+# 2. Download the code and start it
+GIT_SSH_COMMAND="ssh -i ~/.ssh/paysoon -o StrictHostKeyChecking=accept-new" git clone git@github.com:mellodamonke193/paysoon.git
+cd paysoon && git config core.sshCommand "ssh -i ~/.ssh/paysoon"
+sudo bash deploy/setup.sh
+```
+
+`setup.sh` installs Docker, asks for your domain (or uses the droplet's IP for a quick test), generates the secret
+key, and runs Paysoon behind Caddy, which gets a free HTTPS certificate automatically once your domain's DNS **A
+record** points at the droplet. It starts in test mode (emails go to the logs); fill in Resend/Stripe in `.env`, set
+`NODE_ENV=production` and re-run the script to go live. To deploy updates later: `git pull && sudo bash deploy/setup.sh`.
+
 ## Go live (one-time, about an hour)
 
 1. **Domain.** Buy one and set `APP_URL`. Fill in the legal identity variables (see above).

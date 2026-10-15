@@ -1,0 +1,31 @@
+# Paysoon + Caddy (automatic HTTPS) for a single server such as a DigitalOcean droplet.
+# Started by deploy/setup.sh; settings live in ../.env (app) and ./.env (SITE_ADDRESS for Caddy).
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_PATH: /data/paysoon.db
+      TRUST_PROXY: "1"
+    volumes:
+      - paysoon-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  paysoon-data:
+  caddy-data:
+  caddy-config:

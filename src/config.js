@@ -24,7 +24,12 @@ const int = (value, fallback) => (value && /^\d+$/.test(value) ? Number(value) :
 
 const isProd = env.NODE_ENV === 'production';
 const port = int(env.PORT, 3000);
-const appUrl = (env.APP_URL || `http://localhost:${port}`).replace(/\/+$/, '');
+// GitHub Codespaces serves the app on a forwarded https URL behind its own proxy; detect it so a test drive just works.
+const codespaceUrl =
+  env.CODESPACE_NAME && env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN
+    ? `https://${env.CODESPACE_NAME}-${port}.${env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}`
+    : '';
+const appUrl = (env.APP_URL || codespaceUrl || `http://localhost:${port}`).replace(/\/+$/, '');
 const secure = appUrl.startsWith('https://');
 
 const problems = [];
@@ -50,7 +55,7 @@ export const config = Object.freeze({
   appName: env.APP_NAME || 'Paysoon',
   dbPath: env.DATABASE_PATH || resolve(process.cwd(), 'data/paysoon.db'),
   secretKey,
-  trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true',
+  trustProxy: env.TRUST_PROXY === '1' || env.TRUST_PROXY === 'true' || Boolean(codespaceUrl && !env.APP_URL),
   adminEmail: (env.ADMIN_EMAIL || '').trim().toLowerCase(),
   supportEmail: (env.SUPPORT_EMAIL || '').trim(),
   // Shown in the legal pages, footer and reminder emails. Fill these in before launch.

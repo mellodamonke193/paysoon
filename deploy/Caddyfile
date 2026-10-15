@@ -1,0 +1,6 @@
+# SITE_ADDRESS is your domain (Caddy fetches a free HTTPS certificate automatically),
+# or ":80" for a plain-HTTP test on the server's IP address.
+{$SITE_ADDRESS} {
+	encode gzip
+	reverse_proxy app:3000
+}
