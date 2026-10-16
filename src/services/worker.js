@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { config } from '../config.js';
 import { db, get, all, run } from '../db.js';
-import { CADENCES, planAfterSend, stageFor } from '../lib/schedule.js';
+import { CADENCES, planAfterSend, stageFor, soonDuringBusinessHours, businessMorningOnOrAfter, MIN_GAP_MS } from '../lib/schedule.js';
 import { formatMoney } from '../lib/money.js';
 import { daysBetween, localDate, localHour, weekday, DAY, HOUR, MINUTE } from '../lib/time.js';
 import { deliver, sendSystemEmail } from './email.js';
-import { reminderEmail, digestEmail, senderName } from './templates.js';
-import { cycleOf, isPro, logEvent, clientLink, optOutLink, previewStage } from './invoices.js';
+import { reminderEmail, digestEmail, clientResponseEmail, senderName } from './templates.js';
+import { cycleOf, isPro, logEvent, clientLink, optOutLink, previewStage, reschedule } from './invoices.js';
 import { isSuppressed } from './abuse.js';
 
 const BATCH = 50;
@@ -193,6 +193,51 @@ export async function runQueue(now = Date.now()) {
   return results;
 }
 
+/**
+ * "I've already paid" only pauses reminders for a grace period. If the sender never confirmed the payment,
+ * restart them, send the next one soon (it politely asks for the payment details), and tell the sender.
+ */
+export async function resumeExpiredClaims(now = Date.now()) {
+  const expired = all(
+    `SELECT * FROM invoices
+      WHERE status = 'paused' AND client_claimed_at IS NOT NULL AND disputed_at IS NULL
+        AND claim_resume_at IS NOT NULL AND claim_resume_at <= ?
+      ORDER BY claim_resume_at LIMIT 100`,
+    now,
+  );
+  let resumed = 0;
+  for (const invoice of expired) {
+    const user = get('SELECT * FROM users WHERE id = ?', invoice.user_id);
+    if (!user || isSuppressed(user.id, invoice.client_email)) {
+      run('UPDATE invoices SET claim_resume_at = NULL WHERE id = ?', invoice.id);
+      continue;
+    }
+    const { changes } = run(
+      `UPDATE invoices SET status = 'active', client_claimed_at = NULL, claim_resume_at = NULL, updated_at = ?
+        WHERE id = ? AND status = 'paused' AND claim_resume_at IS NOT NULL`,
+      now,
+      invoice.id,
+    );
+    if (!changes) continue;
+    const fresh = get('SELECT * FROM invoices WHERE id = ?', invoice.id);
+    const plan = reschedule(fresh, user, now);
+    if (plan.sendAt && plan.sendAt - now > 2 * DAY) {
+      let at = soonDuringBusinessHours(now, user.timezone);
+      if (fresh.last_sent_at && at < fresh.last_sent_at + MIN_GAP_MS) at = businessMorningOnOrAfter(fresh.last_sent_at + MIN_GAP_MS, user.timezone);
+      run('UPDATE invoices SET next_send_at = ? WHERE id = ?', at, invoice.id);
+    }
+    logEvent(invoice.id, 'claim_expired');
+    await sendSystemEmail({
+      userId: user.id,
+      to: user.email,
+      kind: 'claim_expired',
+      message: clientResponseEmail({ invoice: fresh, kind: 'claim_expired', url: `${config.appUrl}/app/invoices/${invoice.id}` }),
+    });
+    resumed++;
+  }
+  return resumed;
+}
+
 const sumByCurrency = (rows) => rows.map((r) => formatMoney(r.total, r.currency)).join(' + ');
 
 export function digestSummary(user, now = Date.now()) {
@@ -297,6 +342,7 @@ async function tick() {
   try {
     const now = Date.now();
     sweepStuckClaims(now);
+    await resumeExpiredClaims(now);
     await runQueue(now);
     if (now - lastDigestRun >= 15 * MINUTE) {
       lastDigestRun = now;

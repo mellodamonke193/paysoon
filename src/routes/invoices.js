@@ -156,7 +156,7 @@ export default function invoiceRoutes(router) {
     const { invoice } = loadInvoice(ctx);
     if (invoice.status !== 'paid') {
       const now = Date.now();
-      run(`UPDATE invoices SET status = 'paid', paid_at = ?, next_send_at = NULL, updated_at = ? WHERE id = ?`, now, now, invoice.id);
+      run(`UPDATE invoices SET status = 'paid', paid_at = ?, next_send_at = NULL, claim_resume_at = NULL, updated_at = ? WHERE id = ?`, now, now, invoice.id);
       logEvent(invoice.id, 'paid');
     }
     back(ctx, invoice, 'paid');
@@ -169,7 +169,8 @@ export default function invoiceRoutes(router) {
     const ok = tx(() => {
       if (!canOpenAnother(user)) return false;
       run(
-        `UPDATE invoices SET status = 'active', paid_at = NULL, client_claimed_at = NULL, disputed_at = NULL, updated_at = ? WHERE id = ?`,
+        `UPDATE invoices SET status = 'active', paid_at = NULL, client_claimed_at = NULL, claim_resume_at = NULL, disputed_at = NULL,
+                updated_at = ? WHERE id = ?`,
         Date.now(),
         invoice.id,
       );
@@ -186,6 +187,10 @@ export default function invoiceRoutes(router) {
     if (invoice.status === 'active') {
       run(`UPDATE invoices SET status = 'paused', next_send_at = NULL, updated_at = ? WHERE id = ?`, Date.now(), invoice.id);
       logEvent(invoice.id, 'paused');
+    } else if (invoice.status === 'paused' && invoice.claim_resume_at) {
+      // The sender chose to keep it paused (e.g. agreed a payment plan): cancel the automatic restart.
+      run('UPDATE invoices SET claim_resume_at = NULL, updated_at = ? WHERE id = ?', Date.now(), invoice.id);
+      logEvent(invoice.id, 'paused');
     }
     back(ctx, invoice, 'paused');
   });
@@ -197,7 +202,7 @@ export default function invoiceRoutes(router) {
     if (isSuppressed(user.id, invoice.client_email)) return back(ctx, invoice, 'suppressed');
     tx(() => {
       run(
-        `UPDATE invoices SET status = 'active', client_claimed_at = NULL, disputed_at = NULL, updated_at = ? WHERE id = ?`,
+        `UPDATE invoices SET status = 'active', client_claimed_at = NULL, claim_resume_at = NULL, disputed_at = NULL, updated_at = ? WHERE id = ?`,
         Date.now(),
         invoice.id,
       );

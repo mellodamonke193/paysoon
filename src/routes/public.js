@@ -4,7 +4,7 @@ import { HttpError } from '../lib/http.js';
 import { rateLimit } from '../lib/security.js';
 import { line } from '../lib/validate.js';
 import { CURRENCIES, formatMoney, parseAmount } from '../lib/money.js';
-import { isValidDateStr, localDate, daysBetween, HOUR, MINUTE } from '../lib/time.js';
+import { isValidDateStr, localDate, daysBetween, formatDate, DAY, HOUR, MINUTE } from '../lib/time.js';
 import { serveAsset } from '../assets.js';
 import { logEvent } from '../services/invoices.js';
 import { sendSystemEmail } from '../services/email.js';
@@ -30,22 +30,44 @@ function loadPublicInvoice(token) {
 
 const EVENT_FOR = { claimed: 'claimed', wrong: 'disputed', not_mine: 'not_mine', stop: 'opted_out' };
 
+// What the client told us about their payment, e.g. "Paid Oct 14, 2026 · Bank transfer, ref 4821".
+function claimNote(form, owner) {
+  const parts = [];
+  const paidOn = line(form.paid_on);
+  if (isValidDateStr(paidOn)) {
+    const age = daysBetween(paidOn, localDate(Date.now(), owner.timezone));
+    if (age >= -1 && age <= 365) parts.push(`Paid ${formatDate(paidOn, 'medium')}`);
+  }
+  const how = line(form.reference).slice(0, 120);
+  if (how) parts.push(how);
+  return parts.join(' · ');
+}
+
 /**
  * A client told us something about an invoice. Every response pauses reminders; "not mine" and "stop" also
  * block all future reminders from this sender to that address. The owner is emailed once per change.
+ *
+ * "I've already paid" only pauses reminders for a grace period: if the sender doesn't confirm the payment,
+ * reminders restart automatically, and the button can be used at most twice per invoice. Clicking it can
+ * never silence reminders for good.
  */
-async function recordClientResponse(invoice, owner, kind) {
+async function recordClientResponse(invoice, owner, kind, form = {}) {
   const now = Date.now();
   let changed = false;
+  let resumeAt = null;
   if (kind === 'claimed') {
-    changed = invoice.status !== 'paid' && !invoice.client_claimed_at;
-    if (changed) {
-      run(
-        `UPDATE invoices SET client_claimed_at = ?, status = CASE WHEN status = 'active' THEN 'paused' ELSE status END,
-                next_send_at = NULL, updated_at = ? WHERE id = ?`,
-        now, now, invoice.id,
-      );
-    }
+    resumeAt = now + config.limits.claimGraceDays * DAY;
+    const note = claimNote(form, owner);
+    // One conditional UPDATE so concurrent clicks can't exceed the limit.
+    changed = run(
+      `UPDATE invoices SET client_claimed_at = ?, claim_count = claim_count + 1, claim_note = ?,
+              claim_resume_at = CASE WHEN status = 'active' THEN ? ELSE NULL END,
+              status = CASE WHEN status = 'active' THEN 'paused' ELSE status END,
+              next_send_at = NULL, updated_at = ?
+        WHERE id = ? AND status != 'paid' AND client_claimed_at IS NULL AND claim_count < ?`,
+      now, note, resumeAt, now, invoice.id, config.limits.maxClaims,
+    ).changes > 0;
+    if (changed) invoice = { ...invoice, claim_note: note, claim_resume_at: invoice.status === 'active' ? resumeAt : null };
   } else if (kind === 'wrong') {
     changed = !invoice.disputed_at && invoice.status !== 'paid';
     if (changed) {
@@ -69,12 +91,17 @@ async function recordClientResponse(invoice, owner, kind) {
     }
   }
   if (!changed) return;
-  logEvent(invoice.id, EVENT_FOR[kind]);
+  logEvent(invoice.id, EVENT_FOR[kind], kind === 'claimed' ? invoice.claim_note : '');
   await sendSystemEmail({
     userId: owner.id,
     to: owner.email,
     kind: `client_${kind}`,
-    message: clientResponseEmail({ invoice, kind, url: `${config.appUrl}/app/invoices/${invoice.id}` }),
+    message: clientResponseEmail({
+      invoice,
+      kind,
+      url: `${config.appUrl}/app/invoices/${invoice.id}`,
+      resumeOn: invoice.claim_resume_at ? formatDate(localDate(invoice.claim_resume_at, owner.timezone), 'long') : null,
+    }),
   });
 }
 
@@ -166,7 +193,7 @@ export default function publicRoutes(router) {
   router.post('/i/:token/paid', async (ctx) => {
     const { invoice, owner } = loadPublicInvoice(ctx.params.token);
     clientLimit(ctx);
-    await recordClientResponse(invoice, owner, 'claimed');
+    await recordClientResponse(invoice, owner, 'claimed', await ctx.form());
     ctx.redirect(`/i/${invoice.public_token}?done=claimed`);
   });
 

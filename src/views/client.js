@@ -48,11 +48,24 @@ export function clientInvoicePage(ctx, { invoice, owner, today, done, optedOut }
         <p class="tiny faint center">You'll pay ${ownerName} directly via ${new URL(invoice.payment_url).hostname}. ${config.appName} never handles the payment.</p>`
         : ''}
       ${invoice.note ? html`<div class="client-note">${invoice.note}</div>` : ''}
-      ${!paid && !claimed
-        ? html`<form method="post" action="/i/${invoice.public_token}/paid" data-confirm="Let ${ownerName} know you've paid this invoice?">
-        ${csrfField(ctx)}
-        <button class="btn btn-block" type="submit">${icons.check} I've already paid this</button>
-      </form>`
+      ${!paid && !claimed && invoice.claim_count < config.limits.maxClaims
+        ? html`<details class="problem" id="already-paid">
+        <summary>${icons.check} I've already paid this</summary>
+        <form method="post" action="/i/${invoice.public_token}/paid" class="stack-sm">
+          ${csrfField(ctx)}
+          <p class="small muted">Help ${ownerName} find your payment. Reminders pause while they check.</p>
+          <div class="claim-grid">
+            <label class="field"><span class="label">Date paid <span class="opt">(optional)</span></span>
+              <input class="input" type="date" name="paid_on" max="${today}"></label>
+            <label class="field"><span class="label">How you paid <span class="opt">(optional)</span></span>
+              <input class="input" type="text" name="reference" maxlength="120" placeholder="e.g. Bank transfer, ref 4821"></label>
+          </div>
+          <button class="btn btn-block" type="submit">Let ${ownerName} know</button>
+        </form>
+      </details>`
+        : ''}
+      ${!paid && !claimed && invoice.claim_count >= config.limits.maxClaims
+        ? html`<p class="small muted">You've already told ${ownerName} this was paid. If it was, please reply to the reminder email with the payment date and method so they can match it.</p>`
         : ''}
       ${!paid && !optedOut
         ? html`<details class="problem" id="problem">

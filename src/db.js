@@ -149,6 +149,13 @@ const migrations = [
   );
   CREATE INDEX abuse_reports_user ON abuse_reports(user_id, created_at);
   `,
+  // v3: "I've already paid" can't be used to silence reminders forever.
+  `
+  ALTER TABLE invoices ADD COLUMN claim_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE invoices ADD COLUMN claim_note TEXT NOT NULL DEFAULT '';
+  ALTER TABLE invoices ADD COLUMN claim_resume_at INTEGER;
+  CREATE INDEX invoices_claim_resume ON invoices(status, claim_resume_at);
+  `,
 ];
 
 const currentVersion = db.prepare('PRAGMA user_version').get().user_version;

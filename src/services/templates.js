@@ -21,12 +21,18 @@ const withoutTrailingDot = (s) => String(s).replace(/\.$/, '');
  * Wording rules (keep them when editing): state facts only, never threaten consequences, never imply a
  * third party (lawyer, agency, court) is involved, and always offer a way to say "already paid" or reply.
  */
-export function reminderCopy({ clientName, number, amount, dueDate, daysLate, stage, sign, message = '' }) {
+export function reminderCopy({ clientName, number, amount, dueDate, daysLate, stage, sign, message = '', afterClaim = false }) {
   const hi = `Hi ${firstName(clientName)},`;
   const due = formatDate(dueDate, 'long');
   const late = plural(daysLate, 'day');
   const ref = `invoice ${number}`;
-  const note = message ? [{ note: message }] : [];
+  const note = [
+    // The client said "I've already paid" but the payment was never confirmed: ask for details, don't accuse.
+    ...(afterClaim
+      ? [`Thanks for letting me know you'd sent payment. I haven't been able to match it to this invoice yet, so if it's on its way, could you reply with the date and how you paid? That will help me find it.`]
+      : []),
+    ...(message ? [{ note: message }] : []),
+  ];
   switch (stage) {
     case 'upcoming':
       return {
@@ -144,6 +150,7 @@ export function reminderEmail({ invoice, user, stage, daysLate, link, optOutLink
     stage,
     sign: signoff(user),
     message: invoice.message || '',
+    afterClaim: invoice.claim_count > 0 && !invoice.client_claimed_at,
   });
 
   const buttonLabel = stage === 'upcoming' || stage === 'due' ? 'View & pay invoice' : 'Pay invoice now';
@@ -225,9 +232,16 @@ export const resetEmail = (url) =>
   });
 
 const RESPONSE_COPY = {
-  claimed: (i) => ({
+  claimed: (i, { resumeOn }) => ({
     subject: `${i.client_name} says invoice ${i.number} is paid`,
-    intro: `${i.client_name} told us they've paid invoice ${i.number}. Reminders are paused. Once the money arrives, mark it paid. If it doesn't arrive, you can resume reminders with one click.`,
+    intro: `${i.client_name} told us they've paid invoice ${i.number}. Reminders are paused. Once the money arrives, mark it paid.${
+      resumeOn ? ` If you don't, reminders restart automatically on ${resumeOn}, so a client can't just click the button to make them stop.` : ''
+    }`,
+    details: [i.claim_note ? `What they told us: ${i.claim_note}` : 'They did not add a payment date or reference.'],
+  }),
+  claim_expired: (i) => ({
+    subject: `Reminders restarted for invoice ${i.number}`,
+    intro: `${i.client_name} said they'd paid invoice ${i.number}, but it wasn't marked as paid, so reminders have restarted. The next one politely asks them for the payment date and method. If the money did arrive, mark the invoice paid and the reminders stop.`,
   }),
   wrong: (i) => ({
     subject: `${i.client_name} flagged a problem with invoice ${i.number}`,
@@ -243,12 +257,15 @@ const RESPONSE_COPY = {
   }),
 };
 
-export function clientResponseEmail({ invoice, kind, url }) {
-  const copy = (RESPONSE_COPY[kind] || RESPONSE_COPY.claimed)(invoice);
+export function clientResponseEmail({ invoice, kind, url, resumeOn = null }) {
+  const copy = (RESPONSE_COPY[kind] || RESPONSE_COPY.claimed)(invoice, { resumeOn });
   return systemEmail({
     subject: copy.subject,
     intro: copy.intro,
-    details: [`Invoice ${invoice.number} · ${formatMoney(invoice.amount_minor, invoice.currency)} · due ${formatDate(invoice.due_date, 'long')}`],
+    details: [
+      ...(copy.details || []),
+      `Invoice ${invoice.number} · ${formatMoney(invoice.amount_minor, invoice.currency)} · due ${formatDate(invoice.due_date, 'long')}`,
+    ],
     action: 'Review invoice',
     url,
   });

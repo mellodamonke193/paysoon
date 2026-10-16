@@ -85,6 +85,10 @@ export const config = Object.freeze({
     proDailyEmails: int(env.PRO_DAILY_EMAILS, 400),
     // "I don't recognize this invoice" reports from different recipients before sending is suspended for review.
     reportsToSuspend: int(env.ABUSE_REPORTS_TO_SUSPEND, 3),
+    // After a client says "I've already paid", reminders restart this many days later unless the sender confirms payment.
+    claimGraceDays: int(env.CLAIM_GRACE_DAYS, 7),
+    // How many times a client can use "I've already paid" on one invoice.
+    maxClaims: 2,
   },
   workerEnabled: env.WORKER_DISABLED !== '1',
   workerIntervalMs: int(env.WORKER_INTERVAL_MS, 60_000),

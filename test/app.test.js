@@ -21,7 +21,7 @@ Object.assign(process.env, {
 
 const { createApp } = await import('../src/app.js');
 const { get, run } = await import('../src/db.js');
-const { runQueue, sendDigests } = await import('../src/services/worker.js');
+const { runQueue, sendDigests, resumeExpiredClaims } = await import('../src/services/worker.js');
 
 let server;
 let base;
@@ -357,6 +357,56 @@ test('client page: view tracking and one-click "I\'ve paid" pauses reminders', a
   assert.ok(invoice.client_claimed_at);
   assert.ok(get(`SELECT 1 AS x FROM email_log WHERE kind = 'client_claimed' AND user_id = ?`, user.id));
   assert.equal((await client.get('/i/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).status, 404);
+});
+
+test('"I\'ve already paid" cannot be used to silence reminders forever', async () => {
+  const { b, user } = await signUp();
+  const id = await createInvoice(b, { due_date: isoDaysFromNow(-3) });
+  const token = tokenOf(id);
+  const client = new Browser();
+  await client.post(`/i/${token}/paid`, { paid_on: isoDaysFromNow(-1), reference: 'Bank transfer ref 4821' });
+  let inv = get('SELECT * FROM invoices WHERE id = ?', id);
+  assert.equal(inv.status, 'paused');
+  assert.equal(inv.claim_count, 1);
+  assert.match(inv.claim_note, /Bank transfer ref 4821/);
+  assert.ok(inv.claim_resume_at - Date.now() > 6 * 86_400_000, 'reminders restart after the grace period');
+  const notice = get(`SELECT body_text FROM email_log WHERE kind = 'client_claimed' AND user_id = ? ORDER BY id DESC`, user.id);
+  assert.match(notice.body_text, /Bank transfer ref 4821/);
+  assert.match(notice.body_text, /restart automatically/);
+
+  // The grace period passes without the owner confirming: reminders restart and the next email asks for details.
+  const later = inv.claim_resume_at + 1000;
+  assert.ok((await resumeExpiredClaims(later)) >= 1); // other tests' claimed invoices may expire too
+  inv = get('SELECT * FROM invoices WHERE id = ?', id);
+  assert.equal(inv.status, 'active');
+  assert.equal(inv.client_claimed_at, null);
+  assert.ok(inv.next_send_at && inv.next_send_at - later <= 3 * 86_400_000, 'a reminder goes out soon after restarting');
+  assert.ok(get(`SELECT 1 AS x FROM email_log WHERE kind = 'claim_expired' AND user_id = ?`, user.id), 'owner is told');
+  await runQueue(inv.next_send_at + 1000);
+  const reminder = get(`SELECT body_text FROM email_log WHERE invoice_id = ? AND kind = 'reminder' ORDER BY id DESC`, id);
+  assert.match(reminder.body_text, /haven't been able to match it/);
+
+  // A second claim is allowed; a third is refused and the button disappears.
+  await client.post(`/i/${token}/paid`);
+  assert.equal(get('SELECT claim_count FROM invoices WHERE id = ?', id).claim_count, 2);
+  run(`UPDATE invoices SET status = 'active', client_claimed_at = NULL, claim_resume_at = NULL WHERE id = ?`, id);
+  await new Browser().post(`/i/${token}/paid`);
+  inv = get('SELECT * FROM invoices WHERE id = ?', id);
+  assert.equal(inv.claim_count, 2);
+  assert.equal(inv.status, 'active');
+  assert.match((await new Browser().get(`/i/${token}`)).text, /already told/);
+});
+
+test('owner can choose to keep a claimed invoice paused', async () => {
+  const { b } = await signUp();
+  const id = await createInvoice(b, { due_date: isoDaysFromNow(-3) });
+  await new Browser().post(`/i/${tokenOf(id)}/paid`);
+  assert.ok(get('SELECT claim_resume_at FROM invoices WHERE id = ?', id).claim_resume_at);
+  assert.match((await b.get(`/app/invoices/${id}`)).text, /Keep paused/);
+  await b.post(`/app/invoices/${id}/pause`);
+  assert.equal(get('SELECT claim_resume_at FROM invoices WHERE id = ?', id).claim_resume_at, null);
+  await resumeExpiredClaims(Date.now() + 30 * 86_400_000);
+  assert.equal(get('SELECT status FROM invoices WHERE id = ?', id).status, 'paused');
 });
 
 test('one-click unsubscribe (RFC 8058) stops all reminders to that address for good', async () => {

@@ -517,6 +517,12 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .problem { border-top: 1px solid var(--border); padding-top: 14px; }
 .problem summary { cursor: pointer; font-size: 14px; color: var(--muted); font-weight: 600; }
 .problem form { margin-top: 12px; }
+#already-paid { border-top: 0; padding-top: 0; }
+#already-paid summary { list-style: none; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border: 1px solid var(--border-strong); border-radius: 10px; color: var(--text); background: var(--surface); }
+#already-paid summary::-webkit-details-marker { display: none; }
+#already-paid summary svg { width: 16px; height: 16px; }
+.claim-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 720px) { .claim-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* Footer */
 .footer-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 28px; }

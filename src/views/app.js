@@ -223,6 +223,7 @@ const EVENT_LABEL = {
   edited: 'Invoice edited',
   send_retry: 'Delivery retry scheduled',
   send_failed: 'Delivery failed, reminders paused',
+  claim_expired: 'Payment not confirmed, reminders restarted',
 };
 
 export function invoiceDetailPage(ctx, { invoice, timeline, events, preview, suppressed, today }) {
@@ -238,6 +239,7 @@ export function invoiceDetailPage(ctx, { invoice, timeline, events, preview, sup
   ${invoice.status !== 'paid' ? post('paid', html`${icons.check} Mark as paid`, 'btn btn-primary') : post('reopen', 'Reopen invoice', 'btn', 'Reopen this invoice and restart reminders?')}
   ${canSendNow ? post('send-now', html`${icons.send} Send reminder now`, 'btn', `Send the next reminder to ${invoice.client_email} right now?`) : ''}
   ${invoice.status === 'active' ? post('pause', html`${icons.pause} Pause`) : ''}
+  ${invoice.status === 'paused' && invoice.claim_resume_at ? post('pause', html`${icons.pause} Keep paused`, 'btn', "Keep reminders paused? They won't restart automatically.") : ''}
   ${invoice.status === 'paused' && !suppressed ? post('resume', html`${icons.play} Resume reminders`) : ''}
   <a class="btn" href="/app/invoices/${invoice.id}/edit">Edit</a>
 </div>`;
@@ -249,7 +251,11 @@ ${suppressed
   : invoice.disputed_at && invoice.status === 'paused'
     ? html`<div class="alert alert-warn"><span><strong>${invoice.client_name} flagged a problem with this invoice</strong> (${timeAgo(invoice.disputed_at)}). Reminders are paused. Check the details with them, edit the invoice if needed, then resume.</span></div>`
     : invoice.client_claimed_at && invoice.status === 'paused'
-      ? html`<div class="alert alert-info"><span><strong>${invoice.client_name} says they've paid</strong> (${timeAgo(invoice.client_claimed_at)}). Reminders are paused. Check your account, then mark it paid, or resume reminders if the money hasn't arrived.</span></div>`
+      ? html`<div class="alert alert-info"><span><strong>${invoice.client_name} says they've paid</strong> (${timeAgo(invoice.client_claimed_at)})${invoice.claim_note ? html`: “${invoice.claim_note}”` : ''}.
+        Reminders are paused. Check your account, then mark it paid.
+        ${invoice.claim_resume_at
+          ? html`If you don't, reminders restart automatically on <strong>${formatDateTime(invoice.claim_resume_at, tz)}</strong>.`
+          : 'Resume reminders if the money hasn\'t arrived.'}</span></div>`
       : ''}
 </div>
 <div class="detail-hero">
